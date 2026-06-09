@@ -1,0 +1,77 @@
+system:
+  mode: paper_trading          # backtest / paper_trading / live
+  data_source: akshare
+  llm_provider: anthropic      # anthropic / openai
+  llm_model: claude-sonnet-4-6
+  enable_advanced_modules: true
+  human_in_loop: true
+  log_level: INFO
+
+risk:
+  capital: 1000000
+  max_single_risk_pct: 0.02
+  max_corr_group_risk_pct: 0.06
+  max_total_risk_pct: 0.15
+  daily_drawdown_halt_pct: 0.03
+  min_pl_ratio: 1.5
+  black_swan_trigger:
+    - limit_up
+    - limit_down
+    - vix_spike
+
+markets:
+  futures:
+    - rb
+    - i
+    - j
+    - jm
+    - hc
+    - sc
+    - bu
+    - pg
+    - cu
+    - al
+    - zn
+    - ni
+    - au
+    - ag
+    - lh
+    - jd
+
+advanced:
+  memory:
+    db_path: ./vector_db
+    top_k: 5
+    similarity_threshold: 0.75
+    save_daily_snapshots: true
+  abm:
+    enabled: true
+    agents: 500
+    steps: 100
+  rl_execution:
+    enabled: true
+    model_path: ./models/execution_policy.pth
+    time_horizon: 15
+  online_learning:
+    enabled: true
+    drift_sensitivity: 0.002
+  evolution:
+    enabled: true
+    frequency: monthly
+    backtest_days: 180
+  scenario:
+    enabled: true
+    n_paths: 3
+  causal:
+    enabled: true
+    event_lookback_hours: 24
+  crowding:
+    enabled: true
+    warning_threshold: 80
+    hard_veto_threshold: 85
+
+paper_trading:
+  simulate_slippage: true
+  slippage_bps: 2
+  commission_per_lot: 3.0
+  simulate_partial_fills: false

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 敏感配置（API Key 等）
+.env
+.env.local
+secrets.yaml
+
+# 向量数据库（体积大，本地生成）
+vector_db/
+
+# 日志
+logs/
+*.log
+
+# 模型权重
+models/*.pth
+models/*.pt
+models/*.pkl
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 临时分析文件
+run_analysis.py
+/tmp/
+tasks/
