@@ -1,8 +1,17 @@
-"""Commander Agent — Directional Consensus Score (DCS) fusion decision engine."""
+"""
+Commander Agent — Directional Consensus Score (DCS) fusion decision engine.
+
+优化（v4）：
+- 生猪(LH)专项信号：优先使用 cycle_detector 的 get_lh_signal_conditions()
+  当80%历史准确率条件满足时，直接采用，不经过DCS融合
+- 其他品种：继续走DCS流程
+- 大周期否决：周期BULL时禁止SHORT，周期BEAR时禁止LONG
+"""
 
 import logging
 import math
-from typing import Tuple, List
+from typing import Tuple, List, Optional
+import pandas as pd
 
 from models.schemas import (
     CommanderDecision, TechReport, FundReport, MacroReport, VisionReport,
@@ -162,6 +171,40 @@ def run_commander(
     tech: TechReport, fund: FundReport, macro: MacroReport, vision: VisionReport,
     regime: RegimeOutput, scenario: ScenarioReport, causal: CausalEffect,
     memory: MemoryReport, trap: TrapAnalysisReport, crowding: CrowdingLevel,
+    df_window: Optional[pd.DataFrame] = None,   # 原始K线数据（用于专项信号）
 ) -> CommanderDecision:
+    """
+    Commander 决策入口。
+
+    如果是生猪(LH)且传入了 df_window，先尝试专项高胜率信号；
+    否则走标准 DCS 融合。
+    """
+    symbol = tech.symbol.lower()
+
+    # ── 生猪专项信号（优先）──
+    if df_window is not None and symbol in ("lh", "lh2609", "lh2611", "lh2701"):
+        try:
+            from tools.cycle_detector import get_lh_signal_conditions
+            sig = get_lh_signal_conditions(df_window, tech.indicators)
+            if sig["signal"] in ("LONG", "SHORT"):
+                action = sig["signal"]
+                conf   = sig["confidence"]
+                logger.info("LH专项信号触发: %s (置信度%.2f) — %s",
+                            action, conf, sig["reasoning"])
+                return CommanderDecision(
+                    symbol=tech.symbol,
+                    action=action,
+                    confidence=conf,
+                    entry_price=None,
+                    stop_loss=tech.stop_loss,
+                    target_price=tech.target_price,
+                    position_size_pct=round(min(0.02, 0.02 * conf), 4),
+                    reasoning=sig["reasoning"],
+                    posterior_probability=conf,
+                    veto_reasons=[],
+                )
+        except Exception as e:
+            logger.warning("LH专项信号失败，降级DCS: %s", e)
+
     return bayesian_fusion(tech, fund, macro, vision, regime,
                            scenario, causal, memory, trap, crowding)
