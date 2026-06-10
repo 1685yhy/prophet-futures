@@ -106,25 +106,38 @@ def detect_rollover_noise(df_window: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-def get_lh_signal_conditions(df_window: pd.DataFrame, ind: dict) -> Dict[str, Any]:
+def get_lh_signal_conditions(
+    df_window: pd.DataFrame,
+    ind: dict,
+    fundamentals: Dict[str, Any] = None,
+) -> Dict[str, Any]:
     """
-    生猪(LH)专项高胜率信号判断。
+    生猪(LH)专项高胜率信号判断（v2，含基本面）。
     基于4年历史回测验证的条件组合：
 
     做空（80% 5日准确率）：
         大周期BEAR + MA空头 + MACD负不收窄 + OI减/FLAT + ADX>20 + 非换仓噪音
+        基本面增强：基差升水高 → 置信度+4-8%
+        基本面否决：基本面综合偏多(+2)时不做空
 
-    做多（61% 5日准确率，样本少需谨慎）：
+    做多（61% 5日准确率，样本少）：
         大周期BULL + MA多头 + MACD正 + OI积累 + ADX>22 + RSI30-65 + 非换仓噪音
+        基本面否决：基差升水>20%时禁止做多（期货透支现货）
+
+    Args:
+        df_window:    K线 DataFrame
+        ind:          技术指标字典
+        fundamentals: get_hog_fundamentals() 的返回值（可选，有则使用基本面加成）
 
     Returns:
         {
-            "signal":       "SHORT" | "LONG" | "WAIT",
-            "confidence":   float,
-            "conditions":   dict,   # 各条件是否满足
-            "stop_atr_mult": float, # 建议止损ATR倍数
-            "target_atr_mult": float, # 建议止盈ATR倍数
-            "hold_days":    int,    # 建议持仓天数
+            "signal":          "SHORT" | "LONG" | "WAIT",
+            "confidence":      float,
+            "conditions":      dict,
+            "stop_atr_mult":   float,
+            "target_atr_mult": float,
+            "hold_days":       int,
+            "reasoning":       str,
         }
     """
     from tools.indicators import _calc_macd
@@ -172,15 +185,38 @@ def get_lh_signal_conditions(df_window: pd.DataFrame, ind: dict) -> Dict[str, An
         "no_noise":        not noise_info["is_noise"],
     }
 
+    # ── 基本面数据（选填，有则使用）────────────────────────────────────────
+    # 通过 fundamentals 参数传入（由 get_hog_fundamentals() 产生）
+    # 无则用技术面单独判断
+    basis_pct      = fundamentals.get("basis_pct", 0) if fundamentals else 0
+    basis_signal   = fundamentals.get("basis_signal", "NORMAL") if fundamentals else "NORMAL"
+    spot_trend     = fundamentals.get("spot_trend", "FLAT") if fundamentals else "FLAT"
+    fund_score     = fundamentals.get("fundamental_score", 0) if fundamentals else 0
+    profit_signal  = fundamentals.get("profit_signal", "BREAKEVEN") if fundamentals else "BREAKEVEN"
+    supply_signal  = fundamentals.get("supply_signal", "STABLE") if fundamentals else "STABLE"
+
+    conditions["basis_signal"]  = basis_signal
+    conditions["spot_trend"]    = spot_trend
+    conditions["fund_score"]    = fund_score
+
+    # ── 基本面否决规则 ───────────────────────────────────────────────────
+    # 规则1：期现升水极端（>20%）时，禁止做多（期货必须向现货回归）
+    extreme_premium_veto_long = basis_signal == "EXTREME_PREMIUM"
+    # 规则2：现货持续下跌 + 期货升水高，做多信号大幅降权
+    spot_falling_veto_long = spot_trend == "FALLING" and basis_pct > 15
+    # 规则3：基本面综合偏多（+2以上）时，做空信号降权
+    fundamental_bullish_veto_short = fund_score >= 2
+
     # ── 做空信号（80%历史准确率）──
     short_ok = (
         cycle == "BEAR"
         and ma_bear
-        and conditions["macd_neg"]        # MACD负且不收窄
+        and conditions["macd_neg"]
         and oi_trend in ("REDUCING", "FLAT")
         and conditions["adx_ok_short"]
         and conditions["rsi_ok_short"]
         and conditions["no_noise"]
+        and not fundamental_bullish_veto_short   # 基本面偏多时不做空
     )
 
     # ── 做多信号（61%历史准确率，样本少）──
@@ -192,17 +228,39 @@ def get_lh_signal_conditions(df_window: pd.DataFrame, ind: dict) -> Dict[str, An
         and conditions["adx_ok_long"]
         and conditions["rsi_ok_long"]
         and conditions["no_noise"]
+        and not extreme_premium_veto_long    # 基差极度升水时禁止做多
+        and not spot_falling_veto_long       # 现货跌+高升水时禁止做多
     )
+
+    # ── 基本面加成置信度 ────────────────────────────────────────────────
+    basis_boost = 0.0
+    if short_ok:
+        # 基差极度升水 → 做空置信度提升
+        if basis_signal == "EXTREME_PREMIUM":
+            basis_boost = 0.08
+        elif basis_signal == "HIGH_PREMIUM":
+            basis_boost = 0.04
+        # 现货下跌 → 做空置信度提升
+        if spot_trend == "FALLING":
+            basis_boost += 0.04
+        # 供给扩张 → 做空置信度提升
+        if supply_signal == "EXPANDING":
+            basis_boost += 0.03
+
+    fund_reasoning = ""
+    if fundamentals:
+        fund_reasoning = (f" | 基差{basis_pct:.1f}%({basis_signal})"
+                          f" 现货{spot_trend} 基本面评分{fund_score:+d}")
 
     if short_ok:
         return {
             "signal":          "SHORT",
-            "confidence":      min(0.85, 0.70 + cycle_info["strength"] * 0.15),
+            "confidence":      min(0.92, 0.70 + cycle_info["strength"] * 0.15 + basis_boost),
             "conditions":      conditions,
-            "stop_atr_mult":   1.5,   # 覆盖75%分位逆向波动
-            "target_atr_mult": 2.5,   # 覆盖75%分位顺向波动
+            "stop_atr_mult":   1.5,
+            "target_atr_mult": 2.5,
             "hold_days":       5,
-            "reasoning":       f"LH做空80%条件满足: {cycle_info['reasoning']}",
+            "reasoning":       f"LH做空80%条件满足: {cycle_info['reasoning']}{fund_reasoning}",
         }
     elif long_ok:
         return {
@@ -212,9 +270,15 @@ def get_lh_signal_conditions(df_window: pd.DataFrame, ind: dict) -> Dict[str, An
             "stop_atr_mult":   1.5,
             "target_atr_mult": 2.5,
             "hold_days":       5,
-            "reasoning":       f"LH做多61%条件满足: {cycle_info['reasoning']}",
+            "reasoning":       f"LH做多61%条件满足: {cycle_info['reasoning']}{fund_reasoning}",
         }
     else:
+        veto_reasons = []
+        if extreme_premium_veto_long: veto_reasons.append(f"基差升水{basis_pct:.1f}%否决做多")
+        if spot_falling_veto_long:    veto_reasons.append(f"现货下跌+高升水否决做多")
+        if fundamental_bullish_veto_short: veto_reasons.append("基本面偏多否决做空")
+        veto_str = " | ".join(veto_reasons) if veto_reasons else ""
+
         return {
             "signal":          "WAIT",
             "confidence":      0.0,
@@ -222,7 +286,9 @@ def get_lh_signal_conditions(df_window: pd.DataFrame, ind: dict) -> Dict[str, An
             "stop_atr_mult":   0.0,
             "target_atr_mult": 0.0,
             "hold_days":       0,
-            "reasoning":       f"条件不满足: cycle={cycle}, ma_bear={ma_bear}, macd_neg={conditions['macd_neg']}",
+            "reasoning":       (f"条件不满足: cycle={cycle}, ma_bear={ma_bear}, "
+                                f"macd_neg={conditions['macd_neg']}"
+                                + (f" | 否决: {veto_str}" if veto_str else "")),
         }
 
 

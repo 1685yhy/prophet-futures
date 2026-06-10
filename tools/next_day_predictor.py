@@ -24,6 +24,7 @@ from tools.indicators import calc_indicators, _calc_macd
 def predict_next_day(
     df_window: pd.DataFrame,
     ind: Dict[str, Any] = None,
+    fundamentals: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     预测次日价格方向。
@@ -86,6 +87,40 @@ def predict_next_day(
     # ── 评分 ────────────────────────────────────────────────────────────────
     score    = 5   # 基准中性
     signals: List[str] = []
+
+    # ── 基本面评分（若传入）────────────────────────────────────────────────
+    if fundamentals:
+        fund_score  = fundamentals.get("fundamental_score", 0)
+        basis_pct   = fundamentals.get("basis_pct", 0)
+        basis_signal= fundamentals.get("basis_signal", "NORMAL")
+        spot_trend  = fundamentals.get("spot_trend", "FLAT")
+
+        # 基差极度升水：强烈空头信号（期货必须向现货回归）
+        if basis_signal == "EXTREME_PREMIUM":
+            score -= 2
+            signals.append(f"基差升水{basis_pct:.1f}%极端，期货回归压力巨大(-2)")
+        elif basis_signal == "HIGH_PREMIUM":
+            score -= 1
+            signals.append(f"基差升水{basis_pct:.1f}%偏高(-1)")
+        elif basis_signal == "DISCOUNT":
+            score += 1
+            signals.append(f"期货贴水，有上涨修复空间(+1)")
+
+        # 现货趋势
+        if spot_trend == "RISING":
+            score += 1
+            signals.append(f"现货7日上涨，期货跟随动力强(+1)")
+        elif spot_trend == "FALLING":
+            score -= 1
+            signals.append(f"现货7日下跌，期货承压(-1)")
+
+        # 基本面综合
+        if fund_score >= 2:
+            score += 1
+            signals.append(f"基本面综合偏多(+{fund_score})(+1)")
+        elif fund_score <= -2:
+            score -= 1
+            signals.append(f"基本面综合偏空({fund_score})(-1)")
 
     # 均线
     if ma5 > ma20:

@@ -175,6 +175,7 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
     from tools.next_day_predictor import predict_next_day
     from tools.position_manager import get_position_advice, format_position_report
     from tools.cycle_detector import get_lh_signal_conditions, get_generic_signal_conditions
+    from tools.hog_fundamentals import get_hog_fundamentals, format_fundamentals_report
     import pandas as pd
 
     print()
@@ -206,12 +207,20 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
 
     prev_close = ind["prev_close"]
 
-    # ── 次日方向预测 ────────────────────────────────────────────────────────
-    pred = predict_next_day(df, ind)
-
-    # ── 趋势信号 ────────────────────────────────────────────────────────────
+    # ── 基本面数据（生猪专项）────────────────────────────────────────────────
+    fundamentals = None
     if symbol.lower() in ("lh",):
-        trend_sig = get_lh_signal_conditions(df, ind)
+        try:
+            fundamentals = get_hog_fundamentals()
+        except Exception as e:
+            logger.warning("基本面数据获取失败: %s", e)
+
+    # ── 次日方向预测（含基本面）─────────────────────────────────────────────
+    pred = predict_next_day(df, ind, fundamentals=fundamentals)
+
+    # ── 趋势信号（含基本面）─────────────────────────────────────────────────
+    if symbol.lower() in ("lh",):
+        trend_sig = get_lh_signal_conditions(df, ind, fundamentals=fundamentals)
     else:
         trend_sig = get_generic_signal_conditions(symbol, df, ind)
 
@@ -231,6 +240,11 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
             logger.warning("持仓解析失败（格式: 方向,入场,止损,目标,日期）: %s", e)
 
     # ── 输出 ─────────────────────────────────────────────────────────────────
+    # ── 基本面报告（生猪专项）────────────────────────────────────────────────
+    if fundamentals:
+        print(format_fundamentals_report(fundamentals))
+        print()
+
     if position:
         advice = get_position_advice(position, cur, pred, ind, atr, prev_close)
         report = format_position_report(symbol.upper(), position, cur, pred, advice, {
