@@ -55,9 +55,20 @@ def run_technician(symbol: str) -> TechReport:
     ind   = calc_indicators(df)
     close = ind["current_close"]
     atr   = ind["atr14"]
+
+    # MACD柱趋势：连续3日收窄 = 动能好转，不应判断为SHORT
+    closes_arr = df["close"].values
+    from tools.indicators import _calc_macd
+    _, _, hist_now  = _calc_macd(closes_arr)
+    _, _, hist_prev = _calc_macd(closes_arr[:-1])
+    _, _, hist_2ago = _calc_macd(closes_arr[:-2])
+    macd_improving = (hist_now < 0 and hist_prev < 0 and
+                      abs(hist_now) < abs(hist_prev) < abs(hist_2ago))
+
     direction = (
-        "LONG"  if ind["macd_hist"] > 0 and ind["rsi14"] < 70 else
-        "SHORT" if ind["macd_hist"] < 0 and ind["rsi14"] > 30 else "NEUTRAL"
+        "LONG"    if ind["macd_hist"] > 0 and ind["rsi14"] < 70 else
+        "NEUTRAL" if macd_improving and ind["rsi14"] < 50 else  # 负值收窄+RSI低位=动能好转
+        "SHORT"   if ind["macd_hist"] < 0 and ind["rsi14"] > 30 else "NEUTRAL"
     )
     return TechReport(
         symbol=symbol,

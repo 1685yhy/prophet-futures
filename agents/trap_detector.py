@@ -40,17 +40,44 @@ def run_trap_detector(symbol: str) -> TrapAnalysisReport:
         return result
 
     logger.warning("Trap detector fallback for %s", symbol)
+    from tools.fund_data import _is_eod_window
     oi_data       = get_volume_oi(symbol)
     vol_ratio     = oi_data.get("vol_ratio", 1.0)
     oi_change_pct = oi_data.get("oi_change_pct", 0.0)
-    trap_type     = "BULL_TRAP" if vol_ratio < 0.8 and oi_change_pct < -2 else "NONE"
+    oi_trend      = oi_data.get("oi_trend_direction", "FLAT")
+    is_eod        = _is_eod_window()
+
+    trap_type  = "NONE"
+    confidence = 0.20
+    note       = ""
+
+    if oi_change_pct < -2:
+        # 过滤器A：尾盘时间窗口（14:30-15:15）
+        # 日内交易者结构性平仓，不代表主力意图
+        if is_eod:
+            confidence = 0.15
+            note       = "尾盘时间窗口OI减少属日内平仓，不判断陷阱"
+        # 过滤器B：多日OI趋势交叉
+        # 3日趋势仍在增仓时，当日减少是换手而非出货
+        elif oi_trend == "ACCUMULATING":
+            confidence = 0.20
+            note       = f"3日趋势仍积累({oi_trend})，日内减仓为换手非出货"
+        # 非尾盘 + 趋势也在减少 + 缩量 → 真实BULL_TRAP
+        elif vol_ratio < 0.8 and oi_trend != "ACCUMULATING":
+            trap_type  = "BULL_TRAP"
+            confidence = 0.55
+            note       = f"缩量({vol_ratio:.2f}x)+OI减+趋势{oi_trend}，疑似诱多"
+        else:
+            note = f"OI减少但缩量条件不满足(vol_ratio={vol_ratio:.2f})"
+
     return TrapAnalysisReport(
         symbol=symbol,
         trap=TrapType(
             type=trap_type,
             current_phase="Observation" if trap_type == "NONE" else "Potential setup forming",
             trigger_to_confirm="Price reversal with volume > 120% of average",
-            confidence=0.55 if trap_type != "NONE" else 0.3,
+            confidence=confidence,
         ),
-        reasoning=f"Fallback: vol_ratio={vol_ratio:.2f}, oi_change={oi_change_pct:.1f}%",
+        reasoning=(f"Fallback: vol_ratio={vol_ratio:.2f}, oi_chg={oi_change_pct:.1f}%, "
+                   f"trend={oi_trend}, eod={is_eod}. {note}"),
     )
