@@ -134,21 +134,64 @@ def get_hog_fundamentals(date_str: Optional[str] = None) -> Dict[str, Any]:
                     if result["spot_price"] == 0 and row.get("spot_price"):
                         result["spot_price"] = float(row["spot_price"]) / 1000  # 元/吨→元/公斤
 
-                    # 基差信号（生猪期货升水是常态，但超过15%就极度异常）
-                    if basis_pct > 20:
+                    # ── 按合约月份动态判断基差是否异常 ──────────────────
+                    # 历史统计（各月份合约基差均值和90%分位）：
+                    #   01月: 均-1.2%  90%=+4.0%   03月: 均-3.8%  90%=+1.7%
+                    #   05月: 均+2.3%  90%=+7.8%   07月: 均+11.9% 90%=+19.8%
+                    #   09月: 均+22.5% 90%=+32.3%  11月: 数据不足
+                    # 结论：09月合约天然升水高，25%对2609是正常，不是"极端"
+                    # 阈值 = 历史90%分位（超过才是真正异常）
+                    CONTRACT_BASIS_90PCT = {
+                        1: 4.0, 3: 1.7, 5: 7.8, 7: 19.8, 9: 32.3, 11: 20.0
+                    }
+                    CONTRACT_BASIS_MEAN = {
+                        1: -1.2, 3: -3.8, 5: 2.3, 7: 11.9, 9: 22.5, 11: 8.0
+                    }
+                    from datetime import datetime as _dt
+                    dom_contract = str(row.get("dominant_contract", "")) or ""
+                    # 从主力合约代码提取月份（如 LH2609 → 9）
+                    contract_month = None
+                    for part in [dom_contract, str(row.get("near_contract",""))]:
+                        if len(part) >= 6 and part[:2].upper() == "LH":
+                            try:
+                                contract_month = int(part[4:6])
+                                break
+                            except: pass
+                    if contract_month is None:
+                        contract_month = _dt.now().month + 3  # 估算
+                        contract_month = ((contract_month - 1) // 2) * 2 + 1  # 奇数月
+                        contract_month = min(contract_month, 11)
+
+                    basis_mean   = CONTRACT_BASIS_MEAN.get(contract_month, 8.0)
+                    basis_90pct  = CONTRACT_BASIS_90PCT.get(contract_month, 20.0)
+                    basis_vs_mean= basis_pct - basis_mean  # 相对于历史均值的偏差
+
+                    result["contract_month"]     = contract_month
+                    result["basis_mean_hist"]    = basis_mean
+                    result["basis_vs_mean"]      = round(basis_vs_mean, 1)
+
+                    if basis_pct > basis_90pct:
+                        # 真正超过历史90%分位，才算极端
                         result["basis_signal"] = "EXTREME_PREMIUM"
                         score -= 2
-                        signals.append(f"期现升水{basis_pct:.1f}%极度透支现货，期货面临回归压力(-2)")
-                    elif basis_pct > 12:
+                        signals.append(
+                            f"基差{basis_pct:.1f}%超过{contract_month}月合约历史90%分位({basis_90pct:.0f}%)，真正偏高(-2)")
+                    elif basis_vs_mean > 8:
+                        # 比历史均值高8%以上（中度偏高）
                         result["basis_signal"] = "HIGH_PREMIUM"
                         score -= 1
-                        signals.append(f"期现升水{basis_pct:.1f}%偏高，注意基差收窄风险(-1)")
-                    elif basis_pct < -5:
+                        signals.append(
+                            f"基差{basis_pct:.1f}%比{contract_month}月合约历史均值({basis_mean:.0f}%)高{basis_vs_mean:.0f}%，偏高(-1)")
+                    elif basis_pct < basis_mean - 8:
+                        # 比历史均值低8%以上（偏低，可能是利多）
                         result["basis_signal"] = "DISCOUNT"
                         score += 1
-                        signals.append(f"期货贴水{basis_pct:.1f}%，有修复上涨空间(+1)")
+                        signals.append(
+                            f"基差{basis_pct:.1f}%低于{contract_month}月合约历史均值({basis_mean:.0f}%)，偏低有修复空间(+1)")
                     else:
                         result["basis_signal"] = "NORMAL"
+                        signals.append(
+                            f"基差{basis_pct:.1f}%（{contract_month}月合约历史均值{basis_mean:.0f}%），正常范围")
                     break
             except Exception:
                 continue
@@ -236,16 +279,21 @@ def get_fundamental_verdict(fundamentals: Dict[str, Any]) -> Dict[str, str]:
             "summary":    str,  # 一句话总结
         }
     """
-    score = fundamentals.get("fundamental_score", 0)
-    basis = fundamentals.get("basis_signal", "NORMAL")
-    trend = fundamentals.get("spot_trend", "FLAT")
+    score       = fundamentals.get("fundamental_score", 0)
+    basis       = fundamentals.get("basis_signal", "NORMAL")
+    basis_pct   = fundamentals.get("basis_pct", 0)
+    basis_mean  = fundamentals.get("basis_mean_hist", 8.0)
+    contract_m  = fundamentals.get("contract_month", 9)
+    trend       = fundamentals.get("spot_trend", "FLAT")
 
-    # 基差极度升水是最强的空头信号，单独处理
+    # EXTREME_PREMIUM = 真正超过该合约历史90%分位，才是强烈空头信号
+    # 对于2609（历史均值22.5%，90%分位32.3%），25%是正常，不触发此逻辑
     if basis == "EXTREME_PREMIUM":
         return {
             "direction": "BEARISH",
             "strength":  "STRONG",
-            "summary":   f"基差升水{fundamentals.get('basis_pct',0):.1f}%极端透支，期货面临向现货回归的系统性压力",
+            "summary":   (f"基差{basis_pct:.1f}%超过{contract_m}月合约历史90%分位，"
+                          f"相对历史均值({basis_mean:.0f}%)真正偏高，有回归压力"),
         }
 
     if score >= 2:

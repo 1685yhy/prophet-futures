@@ -88,23 +88,36 @@ def predict_next_day(
     score    = 5   # 基准中性
     signals: List[str] = []
 
-    # ── 基本面评分（若传入）────────────────────────────────────────────────
+    # ── 基本面评分（若传入，使用动态阈值版）───────────────────────────────
     if fundamentals:
-        fund_score  = fundamentals.get("fundamental_score", 0)
-        basis_pct   = fundamentals.get("basis_pct", 0)
-        basis_signal= fundamentals.get("basis_signal", "NORMAL")
-        spot_trend  = fundamentals.get("spot_trend", "FLAT")
+        fund_score   = fundamentals.get("fundamental_score", 0)
+        basis_pct    = fundamentals.get("basis_pct", 0)
+        basis_signal = fundamentals.get("basis_signal", "NORMAL")
+        basis_mean   = fundamentals.get("basis_mean_hist", 8.0)
+        basis_vs_mean= fundamentals.get("basis_vs_mean", 0)
+        contract_m   = fundamentals.get("contract_month", 9)
+        spot_trend   = fundamentals.get("spot_trend", "FLAT")
 
-        # 基差极度升水：强烈空头信号（期货必须向现货回归）
+        # 基差评分：以该合约历史均值为基准，而非固定数值
+        # EXTREME_PREMIUM = 超过历史90%分位（真正极端）→ 偏空-2
+        # HIGH_PREMIUM    = 比均值高8%以上（中度偏高）→ 偏空-1
+        # DISCOUNT        = 比均值低8%以上（偏低）→ 偏多+1
+        # NORMAL          = 在历史正常范围 → 不加分
         if basis_signal == "EXTREME_PREMIUM":
             score -= 2
-            signals.append(f"基差升水{basis_pct:.1f}%极端，期货回归压力巨大(-2)")
+            signals.append(
+                f"基差{basis_pct:.1f}%超过{contract_m}月合约历史90%分位，真正偏高(-2)")
         elif basis_signal == "HIGH_PREMIUM":
             score -= 1
-            signals.append(f"基差升水{basis_pct:.1f}%偏高(-1)")
+            signals.append(
+                f"基差{basis_pct:.1f}%比{contract_m}月合约均值({basis_mean:.0f}%)高{basis_vs_mean:.0f}%，偏高(-1)")
         elif basis_signal == "DISCOUNT":
             score += 1
-            signals.append(f"期货贴水，有上涨修复空间(+1)")
+            signals.append(
+                f"基差{basis_pct:.1f}%低于{contract_m}月合约均值({basis_mean:.0f}%)，偏低有修复空间(+1)")
+        else:
+            signals.append(
+                f"基差{basis_pct:.1f}%（{contract_m}月合约历史均值{basis_mean:.0f}%），正常范围")
 
         # 现货趋势
         if spot_trend == "RISING":

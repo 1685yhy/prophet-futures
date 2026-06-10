@@ -199,11 +199,15 @@ def get_lh_signal_conditions(
     conditions["spot_trend"]    = spot_trend
     conditions["fund_score"]    = fund_score
 
-    # ── 基本面否决规则 ───────────────────────────────────────────────────
-    # 规则1：期现升水极端（>20%）时，禁止做多（期货必须向现货回归）
+    # ── 基本面否决规则（动态阈值版）───────────────────────────────────────
+    # 规则1：基差超过该合约历史90%分位（EXTREME_PREMIUM）才否决做多
+    # 注：2609合约历史均值22.5%，90%分位32.3%——25%是正常不否决
     extreme_premium_veto_long = basis_signal == "EXTREME_PREMIUM"
-    # 规则2：现货持续下跌 + 期货升水高，做多信号大幅降权
-    spot_falling_veto_long = spot_trend == "FALLING" and basis_pct > 15
+
+    # 规则2：现货持续下跌 + 基差比历史均值高很多（>15%偏差），做多降权
+    basis_vs_mean = fundamentals.get("basis_vs_mean", 0) if fundamentals else 0
+    spot_falling_veto_long = spot_trend == "FALLING" and basis_vs_mean > 15
+
     # 规则3：基本面综合偏多（+2以上）时，做空信号降权
     fundamental_bullish_veto_short = fund_score >= 2
 
