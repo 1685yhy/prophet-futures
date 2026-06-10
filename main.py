@@ -39,6 +39,18 @@ def parse_args():
         help="当前持仓，格式: 方向,入场价,止损价,目标价,入场日期[,手数]  "
              "例: SHORT,11910,12115,11295,2026-06-09,13",
     )
+    parser.add_argument(
+        "--capital", type=float, default=500_000,
+        help="账户净值（元），用于风控计算，默认500000",
+    )
+    parser.add_argument(
+        "--monthly-pnl", type=float, default=0.0,
+        help="本月已实现PnL（元），用于月度止损检查，默认0",
+    )
+    parser.add_argument(
+        "--consec-loss", type=int, default=0,
+        help="当前连续亏损次数，默认0",
+    )
     parser.add_argument("--date",   default=None, help="End date for backtest (YYYY-MM-DD)")
     parser.add_argument("--symbol", default=None, help="Override symbol (paper_trading)")
     parser.add_argument(
@@ -159,7 +171,13 @@ def run_build_memory(symbols, start_date):
     return {"written": count, "stats": stats}
 
 
-def run_daily_update(symbol: str = "lh", position_str: str = None):
+def run_daily_update(
+    symbol: str = "lh",
+    position_str: str = None,
+    capital: float = 500_000,
+    monthly_pnl: float = 0.0,
+    consec_loss: int = 0,
+):
     """
     每日更新模式：输出次日方向预测 + 持仓管理建议。
 
@@ -177,6 +195,7 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
     from tools.cycle_detector import get_lh_signal_conditions, get_generic_signal_conditions
     from tools.hog_fundamentals import get_hog_fundamentals, format_fundamentals_report
     from tools.backtest import get_lot_size
+    from tools.risk_controller import RiskController, confirm_entry_signal, calc_position_size
     import pandas as pd
 
     print()
@@ -249,6 +268,24 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
 
     lot_size = get_lot_size(symbol)
 
+    # ── 风控状态 ────────────────────────────────────────────────────────────
+    # capital / monthly_pnl / consec_loss 来自函数参数
+
+    rc = RiskController(capital=capital, lot_size=lot_size)
+    rc.equity       = capital
+    rc.monthly_pnl  = monthly_pnl
+    rc.consec_loss  = consec_loss
+    rc._check_month_reset()
+    print(rc.format_status())
+    print()
+
+    # ── 次日确认规则（规则四）────────────────────────────────────────────────
+    if trend_sig.get("signal") in ("LONG", "SHORT"):
+        confirmed = confirm_entry_signal(cur, prev_close, trend_sig["signal"])
+        if not confirmed:
+            print(f"【入场确认】规则四：今日收盘方向与信号相反，推迟入场（等明日确认）")
+            print()
+
     if position:
         advice = get_position_advice(position, cur, pred, ind, atr, prev_close,
                                      lot_size=lot_size)
@@ -278,10 +315,17 @@ def run_daily_update(symbol: str = "lh", position_str: str = None):
     cycle = conds.get("cycle", "N/A")
 
     if sig != "WAIT":
+        stop_atr  = trend_sig.get('stop_atr_mult', 1.5)
+        stop_dist = atr * stop_atr
+        pos_info  = calc_position_size(capital, 0.02, stop_dist, lot_size, consec_loss)
+        confirmed = confirm_entry_signal(cur, prev_close, sig)
+        conf_str  = "✅ 今日确认，明日开盘入场" if confirmed else "⏳ 今日未确认，等待明日收盘再判断"
         print(f"  ✅ {sig} 信号触发！置信度: {trend_sig.get('confidence', 0):.0%}")
-        print(f"  建议: 入场方向={sig}，止损={trend_sig.get('stop_atr_mult',1.5)}×ATR，"
-              f"目标={trend_sig.get('target_atr_mult',2.5)}×ATR，"
-              f"持仓约{trend_sig.get('hold_days',5)}日")
+        print(f"  入场方向={sig}  止损={stop_atr}×ATR={stop_dist:.0f}点  "
+              f"目标={trend_sig.get('target_atr_mult',2.5)}×ATR  持仓约{trend_sig.get('hold_days',5)}日")
+        print(f"  建议手数: {pos_info['qty']}手  最大亏损: {pos_info['risk_cash']:,.0f}元"
+              + (f"（减半仓）" if pos_info['halved'] else ""))
+        print(f"  {conf_str}")
     else:
         print(f"  ⏸ 当前无趋势入场信号（大周期: {cycle}）")
         missing = []
@@ -348,7 +392,13 @@ def main():
 
     elif args.mode == "daily_update":
         symbol = args.symbol or "lh"
-        run_daily_update(symbol=symbol, position_str=args.position)
+        run_daily_update(
+            symbol=symbol,
+            position_str=args.position,
+            capital=args.capital,
+            monthly_pnl=args.monthly_pnl,
+            consec_loss=args.consec_loss,
+        )
         sys.exit(0)
 
 
