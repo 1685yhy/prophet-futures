@@ -68,6 +68,34 @@ def get_hog_fundamentals(date_str: Optional[str] = None) -> Dict[str, Any]:
     signals = []
     score = 0
 
+    # ── 全品种OI汇总（行业标准：多合约品种看全品种OI动量）────────────────────
+    try:
+        from tools.contract_utils import get_multi_contract_oi, is_rollover_period
+        multi_oi = get_multi_contract_oi("LH")
+        result["multi_oi"] = multi_oi
+
+        # 换仓期标记（主力合约切换时OI信号降权）
+        dominant = multi_oi.get("dominant_contract", "LH2609")
+        rollover_info = is_rollover_period(dominant)
+        result["rollover_info"] = rollover_info
+
+        # 全品种OI趋势作为资金面信号
+        oi_trend_full = multi_oi.get("oi_trend_full", "FLAT")
+        rollover_detected = multi_oi.get("rollover_detected", False)
+
+        if not rollover_detected:
+            if oi_trend_full == "ACCUMULATING":
+                score += 1
+                signals.append(f"全品种OI 3日净增{multi_oi['total_oi_chg_3d']:+.0f}手，资金流入(+1)")
+            elif oi_trend_full == "REDUCING":
+                score -= 1
+                signals.append(f"全品种OI 3日净减{multi_oi['total_oi_chg_3d']:+.0f}手，资金流出(-1)")
+        else:
+            signals.append(f"换仓期（{dominant}），OI信号噪音大，不计入得分")
+    except Exception as e:
+        logger.warning("全品种OI获取失败: %s", e)
+        result["multi_oi"] = None
+
     # ── 现货价格 ──────────────────────────────────────────────────────────
     try:
         import akshare as ak
@@ -348,8 +376,10 @@ def _empty_fundamentals() -> Dict[str, Any]:
         "spot_price": 0.0, "spot_7d_change": 0.0, "spot_30d_change": 0.0,
         "spot_trend": "FLAT", "national_avg": 0.0, "three_way_price": 0.0,
         "futures_price": 0.0, "basis_pct": 0.0, "basis_signal": "NORMAL",
+        "contract_month": 9, "basis_mean_hist": 22.5, "basis_vs_mean": 0.0,
         "cost_per_kg": 0.0, "profit_margin": 0.0, "profit_signal": "BREAKEVEN",
         "sow_inventory": 0.0, "sow_3m_change": 0.0, "supply_signal": "STABLE",
         "price_index": 0.0, "index_vs_ma4": 1.0, "index_7d_change": 0.0,
         "fundamental_score": 0, "fundamental_signals": [],
+        "multi_oi": None, "rollover_info": None,
     }

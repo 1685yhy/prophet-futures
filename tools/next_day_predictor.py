@@ -51,16 +51,28 @@ def predict_next_day(
     if ind is None:
         ind = calc_indicators(df_window)
 
-    closes = df_window["close"].values.astype(float)
+    # ── 行业标准：用结算价作为MACD/趋势信号的计算基准 ──
+    # 结算价 = 每日加权均价，比收盘价更稳定，不易被尾盘操纵
+    # 若无结算价列则降级用收盘价
+    if "settle" in df_window.columns:
+        settles = df_window["settle"].values.astype(float)
+        # 填充0值（结算价有时为0，用收盘价替代）
+        closes_raw = df_window["close"].values.astype(float)
+        signal_prices = np.where(settles > 0, settles, closes_raw)
+    else:
+        signal_prices = df_window["close"].values.astype(float)
+
+    closes = df_window["close"].values.astype(float)   # 显示用
     opens  = df_window["open"].values.astype(float)
     highs  = df_window["high"].values.astype(float)
     lows   = df_window["low"].values.astype(float)
 
-    _, _, h0 = _calc_macd(closes)
-    _, _, h1 = _calc_macd(closes[:-1]) if len(closes) > 1 else (0, 0, 0)
-    _, _, h2 = _calc_macd(closes[:-2]) if len(closes) > 2 else (0, 0, 0)
+    # MACD基于结算价序列计算
+    _, _, h0 = _calc_macd(signal_prices)
+    _, _, h1 = _calc_macd(signal_prices[:-1]) if len(signal_prices) > 1 else (0, 0, 0)
+    _, _, h2 = _calc_macd(signal_prices[:-2]) if len(signal_prices) > 2 else (0, 0, 0)
     macd_improving = bool(h0 < 0 and h1 < 0 and abs(h0) < abs(h1) < abs(h2))
-    macd_expanding = bool(h0 > 0 and h1 > 0 and h0 > h1)  # 正值扩大
+    macd_expanding = bool(h0 > 0 and h1 > 0 and h0 > h1)
 
     # OI 趋势
     oi_vals = df_window["oi"].values.astype(float) if "oi" in df_window.columns else np.zeros(10)

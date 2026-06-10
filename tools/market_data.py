@@ -31,16 +31,21 @@ def get_kline(symbol: str, interval: str = "daily", periods: int = 120) -> Kline
         df    = ak.futures_main_sina(symbol=symbol.upper() + "0", start_date=start, end_date=end)
         df    = df.tail(periods).reset_index(drop=True)
         col_map = {"日期":"date","开盘价":"open","最高价":"high",
-                   "最低价":"low","收盘价":"close","成交量":"volume","持仓量":"open_interest"}
+                   "最低价":"low","收盘价":"close","成交量":"volume",
+                   "持仓量":"oi","动态结算价":"settle"}
         df = df.rename(columns=col_map)
-        return KlineData(
+        kline = KlineData(
             symbol=symbol, interval=interval,
             timestamps=df["date"].astype(str).tolist(),
             opens=df["open"].tolist(), highs=df["high"].tolist(),
             lows=df["low"].tolist(),   closes=df["close"].tolist(),
             volumes=df["volume"].tolist(),
-            open_interests=df["open_interest"].tolist() if "open_interest" in df.columns else None,
+            open_interests=df["oi"].tolist() if "oi" in df.columns else None,
         )
+        # 结算价序列供信号计算使用（行业标准：用结算价而非收盘价）
+        if "settle" in df.columns:
+            kline._settles = [float(v) for v in df["settle"].tolist()]
+        return kline
     except Exception as e:
         logger.warning("API error for %s, generating synthetic data: %s", symbol, e)
         return _synthetic_kline(symbol, interval, periods)

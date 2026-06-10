@@ -160,12 +160,21 @@ def get_lh_signal_conditions(
     ma60 = ind.get("ma60", 0)
     macd_h = ind.get("macd_hist", 0)
 
-    oi = df_window["oi"].values.astype(float) if "oi" in df_window.columns else np.zeros(10)
+    oi_col = "oi" if "oi" in df_window.columns else ("open_interest" if "open_interest" in df_window.columns else None)
+    oi = df_window[oi_col].values.astype(float) if oi_col else np.zeros(10)
     oi_3d = float(oi[-1] - oi[-4]) if len(oi) >= 4 else 0
     oi_5d = float(oi[-1] - oi[-6]) if len(oi) >= 6 else oi_3d
     if   oi_3d > 0 and oi_5d > 0: oi_trend = "ACCUMULATING"
     elif oi_3d < 0 and oi_5d < 0: oi_trend = "REDUCING"
     else:                           oi_trend = "FLAT"
+
+    # 全品种OI动量覆盖（换仓期中性化）
+    multi_oi = fundamentals.get("multi_oi") if fundamentals else None
+    if multi_oi:
+        if multi_oi.get("rollover_detected"):
+            oi_trend = "FLAT"   # 换仓跷跷板期，OI信号不可靠
+        elif multi_oi.get("oi_trend_full", "FLAT") != "FLAT":
+            oi_trend = multi_oi["oi_trend_full"]  # 用全品种覆盖单合约
 
     ma_bull = ma5 > ma20 > ma60
     ma_bear = ma5 < ma20 < ma60
@@ -320,7 +329,8 @@ def get_generic_signal_conditions(
     macd_h = ind.get("macd_hist", 0)
     ma_bull = ma5 > ma20 > ma60; ma_bear = ma5 < ma20 < ma60
 
-    oi = df_window["oi"].values.astype(float) if "oi" in df_window.columns else np.zeros(10)
+    oi_col2 = "oi" if "oi" in df_window.columns else ("open_interest" if "open_interest" in df_window.columns else None)
+    oi = df_window[oi_col2].values.astype(float) if oi_col2 else np.zeros(10)
     oi_3d = float(oi[-1] - oi[-4]) if len(oi) >= 4 else 0
     oi_5d = float(oi[-1] - oi[-6]) if len(oi) >= 6 else oi_3d
     if   oi_3d > 0 and oi_5d > 0: oi_trend = "ACCUMULATING"
