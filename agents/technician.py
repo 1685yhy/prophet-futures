@@ -34,13 +34,18 @@ def _get_kline_with_indicators(symbol: str) -> str:
 
 
 def run_technician(symbol: str) -> TechReport:
+    from langchain_core.tools import tool
+
+    @tool
+    def get_kline_with_indicators_tool(sym: str = "") -> str:
+        """Get OHLCV kline data with pre-computed technical indicators for a symbol."""
+        return _get_kline_with_indicators(sym.strip() or symbol)
+
     result = invoke_structured(
         agent_name="technician",
-        tools=[Tool(name="get_kline_with_indicators",
-                    func=lambda sym: _get_kline_with_indicators(sym.strip() or symbol),
-                    description="Get OHLCV kline with pre-computed indicators. Input: symbol")],
+        tools=[get_kline_with_indicators_tool],
         input_text=(f"Perform complete technical analysis on {symbol}. "
-                    "Call get_kline_with_indicators first — all numeric values must come from that tool."),
+                    "Call get_kline_with_indicators_tool first — all numeric values must come from that tool."),
         schema=TechReport, temperature=0.1, max_iterations=4,
     )
     if result is not None:

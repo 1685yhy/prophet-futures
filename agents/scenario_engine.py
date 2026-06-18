@@ -3,7 +3,7 @@
 import logging
 import json
 import pandas as pd
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from tools.llm_utils import invoke_structured
 from tools.market_data import get_kline
@@ -34,11 +34,14 @@ def _get_market_context(symbol: str) -> str:
 
 
 def run_scenario_engine(symbol: str) -> ScenarioReport:
+    @tool
+    def get_market_context_tool(sym: str = "") -> str:
+        """Get market context with technical indicators for a symbol."""
+        return _get_market_context(sym.strip() or symbol)
+
     result = invoke_structured(
         agent_name="scenario_engine",
-        tools=[Tool(name="get_market_context",
-                    func=lambda sym: _get_market_context(sym.strip() or symbol),
-                    description="Get market context with indicators. Input: symbol")],
+        tools=[get_market_context_tool],
         input_text=f"Generate 3 price path scenarios (bullish/neutral/bearish) for {symbol}.",
         schema=ScenarioReport, temperature=0.3, max_iterations=3,
     )

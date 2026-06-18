@@ -12,16 +12,35 @@ logger = logging.getLogger(__name__)
 
 
 def _build_tools() -> list:
-    return [
-        Tool(name="query_causal_graph",
-             func=lambda args: json.dumps(
-                 query_causal_graph(*[a.strip() for a in args.split(",", 1)])),
-             description="Query causal effects. Input: 'event_type, target_symbol'"),
-        Tool(name="do_intervention",
-             func=lambda args: json.dumps(
-                 do_intervention(build_futures_causal_graph(), json.loads(args))),
-             description="Estimate intervention effects. Input: JSON dict of {variable: delta}"),
-    ]
+    from langchain_core.tools import tool
+
+    @tool
+    def query_causal_graph_tool(event_type: str = "", target_symbol: str = "") -> str:
+        """Query causal effects between an event type and a target symbol.
+        event_type can be a string like 'market_policy_change' or a JSON dict."""
+        # Handle case where LLM passes a dict as event_type
+        import ast
+        et = str(event_type).strip()
+        if et.startswith('{'):
+            try:
+                d = ast.literal_eval(et) if isinstance(event_type, str) else event_type
+                if isinstance(d, dict):
+                    # Extract the VALUE (e.g., "market_policy_change") not the key
+                    vals = list(d.values())
+                    et = str(vals[0]) if vals else ""
+            except Exception:
+                pass
+        ts = str(target_symbol).strip()
+        return json.dumps(query_causal_graph(et, ts))
+
+    @tool
+    def do_intervention_tool(intervention: str = "") -> str:
+        """Estimate do-calculus intervention effects. Input: JSON string like '{"variable": delta}'."""
+        from tools.causal_graph import do_intervention as _do, build_futures_causal_graph
+        data = intervention or "{}"
+        return json.dumps(_do(build_futures_causal_graph(), data))
+
+    return [query_causal_graph_tool, do_intervention_tool]
 
 
 def run_causal_reasoner(event_description: str, symbol: str) -> CausalEffect:

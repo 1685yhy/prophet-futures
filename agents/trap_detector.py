@@ -2,7 +2,7 @@
 
 import logging
 import json
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from tools.llm_utils import invoke_structured
 from tools.fund_data import get_volume_oi, get_member_positions
@@ -12,27 +12,30 @@ from models.schemas import TrapAnalysisReport, TrapType
 logger = logging.getLogger(__name__)
 
 
-def _build_tools(symbol: str) -> list:
-    return [
-        Tool(name="get_volume_oi",
-             func=lambda sym: json.dumps(get_volume_oi(sym.strip() or symbol)),
-             description="Get volume and OI data. Input: symbol"),
-        Tool(name="get_member_positions",
-             func=lambda sym: json.dumps(get_member_positions(sym.strip() or symbol)),
-             description="Get top member positions. Input: symbol"),
-        Tool(name="get_tick_data",
-             func=lambda sym: json.dumps(get_tick_data(sym.strip() or symbol, 120)),
-             description="Get recent tick data. Input: symbol"),
-        Tool(name="get_realtime_quote",
-             func=lambda sym: json.dumps(get_realtime_quote(sym.strip() or symbol).model_dump()),
-             description="Get realtime quote. Input: symbol"),
-    ]
-
-
 def run_trap_detector(symbol: str) -> TrapAnalysisReport:
+    @tool
+    def get_volume_oi_tool(sym: str = "") -> str:
+        """Get volume and OI data for a symbol."""
+        return json.dumps(get_volume_oi((sym or symbol).strip()))
+
+    @tool
+    def get_member_positions_tool(sym: str = "") -> str:
+        """Get top member positions for a symbol."""
+        return json.dumps(get_member_positions((sym or symbol).strip()))
+
+    @tool
+    def get_tick_data_tool(sym: str = "") -> str:
+        """Get recent tick data for a symbol. Input: symbol."""
+        return json.dumps(get_tick_data((sym or symbol).strip(), 120))
+
+    @tool
+    def get_realtime_quote_tool(sym: str = "") -> str:
+        """Get realtime quote for a symbol."""
+        return json.dumps(get_realtime_quote((sym or symbol).strip()).model_dump())
+
     result = invoke_structured(
         agent_name="trap_detector",
-        tools=_build_tools(symbol),
+        tools=[get_volume_oi_tool, get_member_positions_tool, get_tick_data_tool, get_realtime_quote_tool],
         input_text=f"Analyze {symbol} for potential bull traps, bear traps, or shakeout patterns.",
         schema=TrapAnalysisReport, temperature=0.1, max_iterations=4,
     )
@@ -52,17 +55,12 @@ def run_trap_detector(symbol: str) -> TrapAnalysisReport:
     note       = ""
 
     if oi_change_pct < -2:
-        # 过滤器A：尾盘时间窗口（14:30-15:15）
-        # 日内交易者结构性平仓，不代表主力意图
         if is_eod:
             confidence = 0.15
             note       = "尾盘时间窗口OI减少属日内平仓，不判断陷阱"
-        # 过滤器B：多日OI趋势交叉
-        # 3日趋势仍在增仓时，当日减少是换手而非出货
         elif oi_trend == "ACCUMULATING":
             confidence = 0.20
             note       = f"3日趋势仍积累({oi_trend})，日内减仓为换手非出货"
-        # 非尾盘 + 趋势也在减少 + 缩量 → 真实BULL_TRAP
         elif vol_ratio < 0.8 and oi_trend != "ACCUMULATING":
             trap_type  = "BULL_TRAP"
             confidence = 0.55

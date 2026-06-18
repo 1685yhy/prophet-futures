@@ -2,7 +2,7 @@
 
 import logging
 import json
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from tools.llm_utils import invoke_structured
 from tools.fund_data import (get_volume_oi, get_basis, get_member_positions,
@@ -13,24 +13,31 @@ logger = logging.getLogger(__name__)
 
 
 def run_fund_analyst(symbol: str) -> FundReport:
+    @tool
+    def get_volume_oi_tool(sym: str = "") -> str:
+        """Get volume and open interest data for a symbol."""
+        return json.dumps(get_volume_oi((sym or symbol).strip()))
+
+    @tool
+    def get_basis_tool(sym: str = "") -> str:
+        """Get spot-futures basis data for a symbol."""
+        return json.dumps(get_basis((sym or symbol).strip()))
+
+    @tool
+    def get_member_positions_tool(sym: str = "") -> str:
+        """Get top member long/short positions for a symbol."""
+        return json.dumps(get_member_positions((sym or symbol).strip()))
+
+    @tool
+    def get_cftc_like_report_tool(sym: str = "") -> str:
+        """Get COT-style positioning breakdown for a symbol."""
+        return json.dumps(get_cftc_like_report((sym or symbol).strip()))
+
     result = invoke_structured(
         agent_name="fund_analyst",
-        tools=[
-            Tool(name="get_volume_oi",
-                 func=lambda sym: json.dumps(get_volume_oi(sym.strip())),
-                 description="Get volume and open interest data. Input: symbol"),
-            Tool(name="get_basis",
-                 func=lambda sym: json.dumps(get_basis(sym.strip())),
-                 description="Get spot-futures basis data. Input: symbol"),
-            Tool(name="get_member_positions",
-                 func=lambda sym: json.dumps(get_member_positions(sym.strip())),
-                 description="Get top member long/short positions. Input: symbol"),
-            Tool(name="get_cftc_like_report",
-                 func=lambda sym: json.dumps(get_cftc_like_report(sym.strip())),
-                 description="Get COT-style positioning breakdown. Input: symbol"),
-        ],
+        tools=[get_volume_oi_tool, get_basis_tool, get_member_positions_tool, get_cftc_like_report_tool],
         input_text=(f"Analyze capital flow and position structure for {symbol}. "
-                    "Call all four tools: get_volume_oi, get_basis, get_member_positions, get_cftc_like_report."),
+                    "Call all four tools: get_volume_oi_tool, get_basis_tool, get_member_positions_tool, get_cftc_like_report_tool."),
         schema=FundReport, temperature=0.1, max_iterations=5,
     )
     if result is not None:
@@ -40,7 +47,6 @@ def run_fund_analyst(symbol: str) -> FundReport:
     oi_data    = get_volume_oi(symbol)
     basis_data = get_basis(symbol)
 
-    # 优先用多日趋势判断方向（排除单日噪音）
     oi_trend   = oi_data.get("oi_trend_direction", "FLAT")
     oi_change  = oi_data.get("oi_change", 0)
     oi_3d      = oi_data.get("oi_trend_3d", 0)
@@ -59,7 +65,6 @@ def run_fund_analyst(symbol: str) -> FundReport:
         confidence = 0.40
         trend_note = f"趋势不明FLAT，单日变化{oi_change:.0f}手"
 
-    # 盘中OI分布加成：早盘主动建仓信号非常强时提升置信度
     try:
         intraday = get_intraday_oi_pattern(symbol)
         pattern  = intraday.get("pattern", "UNKNOWN")

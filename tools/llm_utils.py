@@ -48,6 +48,20 @@ def get_llm(temperature: float = 0.1, model_override: Optional[str] = None) -> A
         except ImportError:
             raise RuntimeError("Install langchain_anthropic or langchain_openai")
 
+    if provider == "deepseek":
+        import os
+        try:
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=model,
+                temperature=temperature,
+                max_tokens=4096,
+                base_url="https://api.deepseek.com",
+                api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+            )
+        except ImportError:
+            raise RuntimeError("Install langchain-openai for DeepSeek support")
+
     raise ValueError(f"Unknown LLM provider: {provider}")
 
 
@@ -86,9 +100,15 @@ def load_prompt(agent_name: str) -> str:
 
 def build_react_prompt(system_prompt: str):
     """Build a ChatPromptTemplate compatible with create_react_agent."""
+    import re
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+    # Escape {品种} and other Chinese placeholders that aren't template variables.
+    # The only variables ChatPromptTemplate should see are {tools}, {tool_names}, {input}.
+    escaped = re.sub(r'\{(?!tools|tool_names|input\})([^}]*)\}', r'{{\1}}', system_prompt)
+
     return ChatPromptTemplate.from_messages([
-        ("system", system_prompt + "\n\nTools available:\n{tools}\nTool names: {tool_names}"),
+        ("system", escaped + "\n\nTools available:\n{tools}\nTool names: {tool_names}"),
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
@@ -101,19 +121,24 @@ def build_agent_executor(
     max_iterations: int = 5,
     verbose: bool = False,
 ) -> Any:
-    """Build a fully wired AgentExecutor using the correct ChatPromptTemplate."""
-    try:
-        from langchain.agents import create_react_agent, AgentExecutor
-    except ImportError:
-        raise RuntimeError("langchain not installed: pip install langchain")
+    """Build a tool-calling agent with structured output support."""
+    from langchain.agents import create_tool_calling_agent, AgentExecutor
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-    llm    = get_llm(temperature=temperature)
-    prompt = build_react_prompt(load_prompt(agent_name))
-    try:
-        agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
-    except TypeError:
-        agent = create_react_agent(llm, tools, prompt)
+    llm = get_llm(temperature=temperature)
+    system_prompt = load_prompt(agent_name)
 
+    # Escape {品种} etc. so ChatPromptTemplate doesn't treat them as variables
+    import re
+    system_prompt = re.sub(r'\{(?!agent_scratchpad|input)([^}]*)\}', r'{{\1}}', system_prompt)
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
+
+    agent = create_tool_calling_agent(llm, tools, prompt)
     return AgentExecutor(
         agent=agent, tools=tools, verbose=verbose,
         max_iterations=max_iterations, handle_parsing_errors=True,
@@ -156,13 +181,47 @@ def invoke_structured(
 
     # Phase 2 — force structured output
     try:
-        llm            = get_llm(temperature=temperature)
-        structured_llm = llm.with_structured_output(schema)
-        return structured_llm.invoke(
+        llm = get_llm(temperature=temperature)
+        # DeepSeek doesn't support native structured output; use prompt-based JSON
+        import json as _json
+        schema_json = _json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=2)
+        json_prompt = (
             f"{system_prompt}\n\n"
-            f"Based on the following gathered data, produce a valid {schema.__name__}:\n\n"
-            f"{gathered_text}"
+            f"Based on the following gathered data, output ONLY a valid JSON object "
+            f"matching this schema (no markdown, no extra text):\n\n"
+            f"Schema:\n{schema_json}\n\n"
+            f"Gathered data:\n{gathered_text}"
         )
+        raw = llm.invoke(json_prompt)
+        raw_text = raw.content if hasattr(raw, 'content') else str(raw)
+        parsed = parse_json_output(raw_text)
+        if parsed and len(parsed) > 0:
+            try:
+                return schema(**parsed)
+            except Exception as ve:
+                # Try with defaults for common missing fields
+                for field_name, field_info in schema.model_fields.items():
+                    if field_name not in parsed:
+                        default = field_info.default
+                        if default is not None:
+                            parsed[field_name] = default
+                        elif field_info.annotation == str:
+                            parsed[field_name] = ""
+                        elif field_info.annotation == float:
+                            parsed[field_name] = 0.0
+                        elif field_info.annotation == int:
+                            parsed[field_name] = 0
+                        elif field_info.annotation == list:
+                            parsed[field_name] = []
+                try:
+                    return schema(**parsed)
+                except Exception as ve2:
+                    logger.warning("[%s] Schema validation failed: %s — raw keys: %s",
+                                 agent_name, ve2, list(parsed.keys())[:10])
+                    return None
+        logger.warning("[%s] Phase 2: empty parse from LLM output (len=%d): %.200s",
+                      agent_name, len(raw_text), raw_text)
+        return None
     except Exception as e:
         logger.warning("[%s] Structured output phase failed: %s", agent_name, e)
         return None
@@ -175,12 +234,29 @@ def parse_json_output(text: str) -> dict:
         return json.loads(text.strip())
     except json.JSONDecodeError:
         pass
-    for pattern in [r"```json\s*(.*?)\s*```", r"```\s*(.*?)\s*```", r"\{.*\}"]:
+    # Try extracting from markdown code blocks
+    for pattern in [r"```json\s*(.*?)\s*```", r"```\s*(.*?)\s*```"]:
         match = re.search(pattern, text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1) if "```" in pattern else match.group())
+                return json.loads(match.group(1))
             except json.JSONDecodeError:
                 continue
+    # Try finding any valid JSON object — use balanced brace matching
+    brace_depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if brace_depth == 0:
+                start = i
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            if brace_depth == 0 and start >= 0:
+                candidate = text[start:i+1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    start = -1
     logger.warning("Could not parse JSON from LLM output: %s", text[:200])
     return {}

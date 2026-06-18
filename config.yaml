@@ -1,8 +1,8 @@
 system:
   mode: paper_trading          # backtest / paper_trading / live
   data_source: akshare
-  llm_provider: anthropic      # anthropic / openai
-  llm_model: claude-sonnet-4-6
+  llm_provider: deepseek       # deepseek / anthropic / openai
+  llm_model: deepseek-v4-pro
   enable_advanced_modules: true
   human_in_loop: true
   log_level: INFO

@@ -100,7 +100,7 @@ def plot_kline_chart(symbol: str, interval: str = "daily", periods: int = 60) ->
         kline = get_kline(symbol, interval, periods)
         df    = pd.DataFrame({
             "open": kline.opens, "high": kline.highs,
-            "low": kline.lows,   "close": kline.closes,
+            "low": kline.lows,   "close": kline.closes, "volume": kline.volumes,
         })
         ind = calc_indicators(df)
 

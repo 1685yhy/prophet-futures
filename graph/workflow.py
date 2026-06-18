@@ -30,6 +30,11 @@ cfg    = load_config()
 
 def scanner_node(state: TradingState) -> TradingState:
     logger.info("=== SCANNER ===")
+    # If user specified a single symbol, skip scanner and use it directly
+    pre_set = state.get("candidates", [])
+    if len(pre_set) == 1 and pre_set[0]:
+        logger.info("User-specified symbol: %s", pre_set[0])
+        return {**state, "candidates": pre_set, "errors": state.get("errors", [])}
     try:
         scan = run_scanner()
         return {**state, "candidates": scan.candidates, "scan_output": scan,
@@ -154,21 +159,99 @@ def _build_final_output(state: TradingState) -> str:
     decision = state.get("commander_decision")
     order    = state.get("risk_order")
     symbol   = state.get("active_symbol", "N/A")
-    lines    = [
-        f"=== Prophet Futures — {datetime.now().strftime('%Y-%m-%d %H:%M')} ===",
-        f"Symbol: {symbol}",
+    tech     = state.get("technical_report")
+    fund     = state.get("fund_report")
+    macro    = state.get("macro_report")
+    scenario = state.get("scenario_report")
+    crowding = state.get("crowding")
+    trap     = state.get("trap_report")
+    memory   = state.get("memory_report")
+    causal   = state.get("causal_report")
+    regime   = state.get("regime")
+
+    lines = [
+        f"{'='*55}",
+        f"  先知期货认知交易系统 — 完整分析",
+        f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}  品种: {symbol.upper()}",
+        f"{'='*55}",
+        "",
     ]
+
+    # ── 各维度分析 ──
+    if tech:
+        lines.append("【技术面】")
+        lines.append(f"  方向: {tech.signal.direction}  强度: {tech.signal.strength}  置信度: {tech.confidence:.0%}")
+        lines.append(f"  支撑: {tech.key_support}  阻力: {tech.key_resistance}")
+        lines.append(f"  止损: {tech.stop_loss}  目标: {tech.target_price}")
+        lines.append(f"  理由: {tech.signal.reasoning[:150] if tech.signal.reasoning else 'N/A'}")
+        lines.append("")
+    if fund:
+        lines.append(f"【资金面】净流: {fund.net_flow}  置信度: {fund.confidence:.0%}")
+        lines.append(f"  {fund.reasoning[:120]}")
+        lines.append("")
+    if macro:
+        lines.append(f"【宏观面】趋势: {macro.macro_trend}  置信度: {macro.confidence:.0%}")
+        lines.append(f"  驱动力: {', '.join(macro.key_drivers[:3]) if macro.key_drivers else 'N/A'}")
+        lines.append(f"  风险事件: {', '.join(macro.risk_events[:3]) if macro.risk_events else '无'}")
+        lines.append("")
+    if regime:
+        lines.append(f"【市场气象】{regime.regime}  ADX: {regime.adx_value:.1f}  VIX当量: {regime.vix_equivalent:.1f}")
+        lines.append(f"  建议权重: {regime.recommended_weights}")
+        lines.append("")
+    if crowding:
+        lines.append(f"【拥挤度】评分: {crowding.score}/100  {'⚠ 拥挤' if crowding.score > 80 else '✓ 正常'}")
+        lines.append(f"  同类资金占比: {crowding.similar_funds_pct:.0%}")
+        lines.append("")
+    if trap:
+        lines.append(f"【陷阱检测】{trap.trap.type}  置信度: {trap.trap.confidence:.0%}")
+        lines.append(f"  当前阶段: {trap.trap.current_phase}")
+        lines.append("")
+    if memory:
+        lines.append(f"【历史记忆】相似案例: {len(memory.similar_cases)}个  历史胜率: {memory.historical_win_rate:.1%}")
+        lines.append(f"  平均盈亏比: {memory.avg_profit_loss_ratio:.2f}")
+        lines.append(f"  结论: {memory.conclusion[:120]}")
+        lines.append("")
+    if scenario:
+        lines.append(f"【情景分析】最坏亏损: {scenario.worst_case_loss_pct:.1f}%  最好收益: {scenario.best_case_gain_pct:.1f}%")
+        for i, p in enumerate(scenario.paths[:3]):
+            lines.append(f"  情景{i+1} ({p.probability:.0%}): {p.description[:80]} → 目标{p.target_price}")
+        lines.append("")
+    if causal:
+        lines.append(f"【因果引擎】方向: {causal.direction}  强度: {causal.strength}  置信度: {causal.confidence:.0%}")
+        lines.append(f"  因果链: {causal.chain}")
+        lines.append("")
+
+    # ── 决策 ──
+    lines.append(f"{'─'*55}")
+    lines.append("【综合决策】")
     if decision:
-        lines += [f"Decision: {decision.action} (confidence={decision.confidence:.2f})",
-                  f"Reasoning: {decision.reasoning}"]
+        lines.append(f"  行动: {decision.action}")
+        lines.append(f"  置信度: {decision.confidence:.0%}")
+        lines.append(f"  仓位: {decision.position_size_pct:.2%}")
+        if decision.entry_price:
+            lines.append(f"  入场价: {decision.entry_price}")
+        if decision.stop_loss:
+            lines.append(f"  止损价: {decision.stop_loss}")
+        if decision.target_price:
+            lines.append(f"  目标价: {decision.target_price}")
+        lines.append(f"  理由: {decision.reasoning}")
         if decision.veto_reasons:
-            lines.append(f"Vetoes: {', '.join(decision.veto_reasons)}")
+            lines.append(f"  否决项: {', '.join(decision.veto_reasons)}")
+    lines.append("")
+
+    # ── 订单 ──
     if order and order.orders:
-        lines += [f"Orders: {len(order.orders)} slices",
-                  f"Max Loss: {order.max_loss:.2f} | Risk: {order.risk_pct:.2%}",
-                  f"Notes: {order.execution_notes}"]
-    elif order:
-        lines.append(f"No orders: {order.execution_notes}")
+        lines.append("【风控订单】")
+        lines.append(f"  笔数: {len(order.orders)}  最大亏损: {order.max_loss:.2f}  风险: {order.risk_pct:.2%}")
+        lines.append(f"  备注: {order.execution_notes}")
+        for i, o in enumerate(order.orders, 1):
+            lines.append(f"  [{i}] {o.side} {o.quantity:.1f}手 @ {o.price or 'MARKET'}")
+    elif decision and decision.action == "WAIT":
+        lines.append("【操作建议】观望，不操作")
+        lines.append("  等待信号明确后再入场")
+
+    lines.append("")
+    lines.append("⚠ 免责声明: 本系统仅供学习研究，不构成投资建议")
     return "\n".join(lines)
 
 

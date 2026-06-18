@@ -4,7 +4,7 @@ import logging
 import json
 import numpy as np
 import pandas as pd
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from tools.llm_utils import invoke_structured
 from tools.market_data import get_kline
@@ -29,11 +29,14 @@ def _search_memory(symbol: str) -> str:
 
 
 def run_memory_retriever(symbol: str) -> MemoryReport:
+    @tool
+    def search_memory_tool(sym: str = "") -> str:
+        """Search historical similar market cases for a symbol."""
+        return _search_memory(sym.strip() or symbol)
+
     result = invoke_structured(
         agent_name="memory_retriever",
-        tools=[Tool(name="search_memory",
-                    func=lambda sym: _search_memory(sym.strip() or symbol),
-                    description="Search historical similar market cases. Input: symbol")],
+        tools=[search_memory_tool],
         input_text=f"Retrieve historical market analogues for {symbol} and compute win rate statistics.",
         schema=MemoryReport, temperature=0.1, max_iterations=3,
     )

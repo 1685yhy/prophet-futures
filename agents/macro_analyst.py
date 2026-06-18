@@ -2,7 +2,7 @@
 
 import logging
 import json
-from langchain_core.tools import Tool
+from langchain_core.tools import tool
 
 from tools.llm_utils import invoke_structured
 from tools.macro_data import get_sector_performance, get_market_index, get_global_futures, get_news_sentiment
@@ -21,22 +21,31 @@ SYMBOL_SECTOR_MAP = {
 
 def run_macro_analyst(symbol: str) -> MacroReport:
     sector = SYMBOL_SECTOR_MAP.get(symbol.lower(), "general")
+
+    @tool
+    def get_sector_performance_tool(sector_name: str = "") -> str:
+        """Get sector performance data. Input: sector name (e.g. agriculture, metals, energy, black)."""
+        return json.dumps(get_sector_performance(sector_name.strip() or sector))
+
+    @tool
+    def get_market_index_tool() -> str:
+        """Get major market index data (SSE, SZSE, etc)."""
+        return json.dumps(get_market_index())
+
+    @tool
+    def get_global_futures_tool() -> str:
+        """Get global futures benchmarks (CBOT, LME, NYMEX, etc)."""
+        return json.dumps(get_global_futures())
+
+    @tool
+    def get_news_sentiment_tool(keyword: str = "") -> str:
+        """Get news sentiment for keywords. Input: comma-separated keywords."""
+        return json.dumps(get_news_sentiment([keyword.strip(), symbol]))
+
     result = invoke_structured(
         agent_name="macro_analyst",
-        tools=[
-            Tool(name="get_sector_performance",
-                 func=lambda s: json.dumps(get_sector_performance(s.strip() or sector)),
-                 description="Get sector performance. Input: sector name"),
-            Tool(name="get_market_index",
-                 func=lambda _: json.dumps(get_market_index()),
-                 description="Get major market index data"),
-            Tool(name="get_global_futures",
-                 func=lambda _: json.dumps(get_global_futures()),
-                 description="Get global futures benchmarks"),
-            Tool(name="get_news_sentiment",
-                 func=lambda kw: json.dumps(get_news_sentiment([kw.strip(), symbol])),
-                 description="Get news sentiment. Input: keyword"),
-        ],
+        tools=[get_sector_performance_tool, get_market_index_tool,
+               get_global_futures_tool, get_news_sentiment_tool],
         input_text=f"Analyze macroeconomic drivers for {symbol} (sector: {sector}).",
         schema=MacroReport, temperature=0.1, max_iterations=5,
     )

@@ -114,7 +114,6 @@ def run_backtest(date, symbols, backtest_days):
     logger.info("Starting BACKTEST mode: %s, days=%d, symbols=%s", date, backtest_days, symbols)
 
     from tools.backtest import run_backtest as bt
-    from utils.portfolio_analytics import generate_trade_report
 
     result = bt(date=date, symbols=symbols, backtest_days=backtest_days)
 
@@ -122,21 +121,26 @@ def run_backtest(date, symbols, backtest_days):
         print(f"回测失败: {result['error']}")
         return result
 
-    print(generate_trade_report(result.get("trades", [])))
-    print(f"\n回测区间: 截至 {result['date_range']}, {backtest_days} 天")
-    print(f"品种: {', '.join(result['symbols'])}")
-    print(f"总交易: {result['total_trades']} 笔")
-    print(f"胜率:   {result['win_rate']:.1%}")
-    print(f"盈亏比: {result['pl_ratio']:.2f}")
-    print(f"夏普:   {result['sharpe_ratio']:.3f}")
-    print(f"最大回撤: {result['max_drawdown_pct']:.2f}%")
-    print(f"总收益: {result['total_pnl']:+,.2f} 元 ({result['total_return_pct']:+.2f}%)")
+    print(f"\n{'='*55}")
+    print(f"  回测结果")
+    print(f"  区间: 截至 {result['date_range']}, {backtest_days} 天")
+    print(f"  品种: {', '.join(result['symbols'])}")
+    print(f"{'='*55}")
+    print(f"  总交易: {result['total_trades']} 笔")
+    print(f"  胜率:   {result['win_rate']:.1%}")
+    print(f"  盈亏比: {result['pl_ratio']:.2f}")
+    print(f"  平均盈利: {result.get('avg_win', 0):,.0f} 元")
+    print(f"  平均亏损: {result.get('avg_loss', 0):,.0f} 元")
+    print(f"  夏普:   {result['sharpe_ratio']:.3f}")
+    print(f"  最大回撤: {result['max_drawdown_pct']:.2f}%")
+    print(f"  总收益: {result['total_pnl']:+,.0f} 元 ({result['total_return_pct']:+.2f}%)")
+    print()
 
     if result.get("trades"):
-        print(f"\n最近5笔交易:")
-        for t in result["trades"][-5:]:
+        print(f"  最近10笔交易:")
+        for t in result["trades"][-10:]:
             print(f"  {t['symbol']} {t['direction']:5s} {t['entry_date']}→{t['exit_date']} "
-                  f"PnL={t['pnl']:+.1f} ({t['reason']})")
+                  f"PnL={t['pnl']:+,.0f} ({t['reason']})")
 
     return result
 
