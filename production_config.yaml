@@ -1,0 +1,49 @@
+# Prophet Futures — Production Configuration
+# Generated: 2026-06-18
+# Strategy: JM(焦煤) MC=7 S=1.5 T=3.0 + LH(生猪) MC=7 S=1.5 T=3.0
+
+production:
+  capital: 1000000        # 本金（元）
+  symbols: ["jm", "lh"]   # 交易品种
+
+strategy:
+  min_conditions: 7       # 7/8 条件满足才出手
+  stop_atr_mult: 1.5      # 止损: 1.5×ATR
+  target_atr_mult: 3.0    # 止盈: 3.0×ATR
+  require_regime: true    # 只在趋势市场交易
+  require_volume: true    # JM需量确认, LH不需要
+  require_no_noise: true  # 跳过换仓噪音期
+  time_stop_days: 8       # 8天不动就平仓
+
+risk_management:
+  risk_per_trade: 0.01    # 单笔风险1%
+  max_consecutive_loss: 3  # 连亏3笔暂停
+  monthly_loss_limit: 0.05 # 月度亏损5%熔断
+  max_positions: 2         # 最多同时2个持仓
+  position_sizing: fixed   # 固定比例
+
+trading_schedule:
+  signal_check: "daily_close"  # 收盘后判断
+  execution: "next_open"       # 次日开盘执行
+  trading_days: "mon-fri"      # 仅交易日
+
+verified_performance:
+  jm:
+    trades: 43
+    win_rate: 0.63
+    total_return: 0.115
+    max_drawdown: 0.020
+    sharpe: 4.71
+    max_consecutive_loss: 3
+  lh:
+    trades: 24
+    win_rate: 0.50
+    total_return: 0.084
+    max_drawdown: 0.031
+    sharpe: 4.45
+    wf_recent_win_rate: 0.73  # Walk-Forward最近周期
+  portfolio:
+    trades: 103
+    win_rate: 0.57
+    total_return: 0.224
+    max_drawdown: 0.036
